@@ -1,0 +1,148 @@
+body {
+    font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+    font-size: 13px;
+    color: #242729;
+
+    margin: auto;
+    width: 900px;
+    padding-top: 30px;
+    padding-bottom: 30px;
+}
+
+table {
+    width: 100%;
+}
+
+p {
+    margin: 0;
+}
+
+.text-lg {
+    font-size:16px;
+}
+
+.text-md {
+    font-size:14px;
+}
+
+.text-md-sm {
+    font-size: 13px;
+}
+
+.text-sm {
+    font-size:12px;
+}
+
+.text-xs {
+    font-size:10px;
+}
+
+.blue-text {
+    color: #365f91;
+}
+
+.gray-text {
+    color: #95989A;
+}
+
+.bold-text {
+    font-weight: bold;
+}
+
+.center-text {
+    text-align: center;
+}
+
+.left-text {
+    text-align: left;
+}
+
+.top-space {
+    padding-top: 10px;
+}
+
+.bottom-space {
+    margin-bottom: 3px;
+}
+
+.main-table,
+.main-table > thead > tr,
+.main-table > thead > tr > td,
+.main-table > thead > tr > th,
+.main-table > tbody > tr,
+.main-table > tbody > tr > td,
+.main-table > tbody > tr > th {
+    border: none;
+}
+
+.variant-table {
+    border: 1px solid #365f91;
+    text-align: center;
+    border-spacing: 0;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+.variant-table th {
+    color: white;
+    font-weight: normal;
+    background-color: #365f91;
+    font-weight: bold;
+}
+
+.variant-table td {
+    border: 1px solid #365f91;
+}
+
+.variant-table p {
+    display: inline;
+}
+
+.padded-cell {
+    padding: 5px 3px;
+}
+
+.variant-details-table th {
+    padding: 5px 3px;
+}
+
+.results-box {
+    width: 80%;
+    margin: 0 auto;
+    padding: 5px;
+}
+
+.results-box.positive {
+    border: 3px solid #365f91;
+    color: #365f91;
+    background-color: rgba(81, 140, 215, .08);
+}
+
+.results-box.negative {
+    border: 3px solid #EF8633;
+    color: #EF8633;
+    background-color: rgba(239, 134, 51, .08);
+}
+
+@page {
+  /*size: 215mm 279mm;*/
+  size: letter;
+  margin: 10mm;
+}
+
+@media print {
+    thead {display: table-header-group;}
+    .logo { max-width: 200px; }
+
+    body {
+        padding: 0px;
+        -webkit-print-color-adjust: exact;
+    }
+
+    @page {
+        size: auto;
+        margin: 0.25in;
+    }
+}
