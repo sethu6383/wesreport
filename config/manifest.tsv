@@ -1,0 +1,4 @@
+#sample_id	bam_path	type
+REF1	/path/to/reference1.bam	reference
+REF2	/path/to/reference2.bam	reference
+TEST1	/path/to/test1.bam	test
