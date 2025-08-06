@@ -1,0 +1,16 @@
+{
+  "bam_folder": "/data/SMN/BAM/",
+  "ref_folder": "/data/SMN/BAM/smn_z_score/refs/",
+  "bed_file": "/data/SMN/BAM/SMN1_SMN2_Exons.bed",
+  "output_csv": "/data/SMN/BAM/smn_z_score/output/scombined_smn_cnv_zscore_output.csv",
+  "min_depth_threshold": 5.0,
+  "min_ref_samples": 3,
+  "max_workers": 4,
+  "z_score_thresholds": {
+    "homozygous_deletion": -2.5,
+    "heterozygous_deletion": -1.2,
+    "normal_low": -1.2,
+    "normal_high": 1.2,
+    "heterozygous_duplication": 2.5
+  }
+}
