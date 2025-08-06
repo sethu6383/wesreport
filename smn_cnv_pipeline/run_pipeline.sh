@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # run_pipeline.sh - Master script for SMN CNV detection pipeline
-# Usage: ./run_pipeline.sh [--config config_dir] [--results results_dir] [--skip-plots]
+# Usage: ./run_pipeline.sh <input_bam_dir> [--config config_dir] [--results results_dir] [--sample-type TYPE] [--skip-plots]
 
 set -euo pipefail
 
@@ -15,12 +15,13 @@ LOG_DIR="$PIPELINE_DIR/logs"
 
 # Default configuration files
 BED_FILE="$CONFIG_DIR/smn_exons.bed"
-MANIFEST_FILE="$CONFIG_DIR/sample_manifest.txt"
 SNP_FILE="$CONFIG_DIR/discriminating_snps.txt"
 
 # Pipeline options
 SKIP_PLOTS=false
 VERBOSE=false
+SAMPLE_TYPE="auto"
+INPUT_BAM_DIR=""
 
 # Color codes for output
 RED='\033[0;31m'
@@ -78,12 +79,12 @@ check_dependencies() {
     print_success "All dependencies found"
 }
 
-# Function to validate configuration files
+# Function to validate configuration files and input
 validate_config() {
-    print_info "Validating configuration files..."
+    print_info "Validating configuration files and input..."
     
-    # Check if files exist
-    for file in "$BED_FILE" "$MANIFEST_FILE" "$SNP_FILE"; do
+    # Check if configuration files exist
+    for file in "$BED_FILE" "$SNP_FILE"; do
         if [ ! -f "$file" ]; then
             print_error "Configuration file not found: $file"
             exit 1
@@ -96,14 +97,20 @@ validate_config() {
         exit 1
     fi
     
-    # Validate manifest file
-    local sample_count=$(grep -v "^#" "$MANIFEST_FILE" | grep -v "^sample_id" | wc -l)
-    if [ "$sample_count" -eq 0 ]; then
-        print_error "No samples found in manifest file"
+    # Validate input BAM directory
+    if [ ! -d "$INPUT_BAM_DIR" ]; then
+        print_error "Input BAM directory not found: $INPUT_BAM_DIR"
         exit 1
     fi
     
-    print_success "Configuration files validated ($sample_count samples found)"
+    # Check for BAM files
+    local bam_count=$(find "$INPUT_BAM_DIR" -name "*.bam" | wc -l)
+    if [ "$bam_count" -eq 0 ]; then
+        print_error "No BAM files found in directory: $INPUT_BAM_DIR"
+        exit 1
+    fi
+    
+    print_success "Configuration validated ($bam_count BAM files found)"
 }
 
 # Function to create output directories
@@ -123,7 +130,7 @@ run_depth_extraction() {
     local output_dir="$RESULTS_DIR/depth"
     local log_file="$LOG_DIR/depth_extraction.log"
     
-    if ! bash "$BIN_DIR/extract_depth.sh" "$MANIFEST_FILE" "$BED_FILE" "$output_dir" 2>&1 | tee "$log_file"; then
+    if ! bash "$BIN_DIR/extract_depth.sh" "$INPUT_BAM_DIR" "$BED_FILE" "$output_dir" "$SAMPLE_TYPE" 2>&1 | tee "$log_file"; then
         print_error "Depth extraction failed. Check log: $log_file"
         exit 1
     fi
@@ -166,7 +173,12 @@ run_allele_counting() {
     local output_dir="$RESULTS_DIR/allele_counts"
     local log_file="$LOG_DIR/allele_counting.log"
     
-    if ! python3 "$BIN_DIR/allele_count.py" "$MANIFEST_FILE" "$SNP_FILE" "$output_dir" 2>&1 | tee "$log_file"; then
+    local cmd="python3 $BIN_DIR/allele_count.py $INPUT_BAM_DIR $SNP_FILE $output_dir"
+    if [ "$SAMPLE_TYPE" != "auto" ]; then
+        cmd="$cmd --sample-type $SAMPLE_TYPE"
+    fi
+    
+    if ! eval "$cmd" 2>&1 | tee "$log_file"; then
         print_error "Allele counting failed. Check log: $log_file"
         exit 1
     fi
@@ -185,10 +197,11 @@ run_normalization() {
     print_info "Step 4: Normalizing coverage and calculating Z-scores..."
     
     local coverage_file="$RESULTS_DIR/depth/coverage_summary.txt"
+    local sample_info_file="$RESULTS_DIR/allele_counts/sample_info.txt"
     local output_file="$RESULTS_DIR/normalized/z_scores.txt"
     local log_file="$LOG_DIR/normalization.log"
     
-    if ! python3 "$BIN_DIR/normalize_coverage.py" "$coverage_file" "$MANIFEST_FILE" "$output_file" 2>&1 | tee "$log_file"; then
+    if ! python3 "$BIN_DIR/normalize_coverage.py" "$coverage_file" "$sample_info_file" "$output_file" 2>&1 | tee "$log_file"; then
         print_error "Coverage normalization failed. Check log: $log_file"
         exit 1
     fi
@@ -255,6 +268,7 @@ create_summary() {
     print_info "Creating pipeline summary..."
     
     local summary_file="$RESULTS_DIR/pipeline_summary.txt"
+    local sample_count=$(find "$INPUT_BAM_DIR" -name "*.bam" | wc -l)
     
     cat > "$summary_file" << EOF
 SMN CNV Detection Pipeline Summary
@@ -265,16 +279,15 @@ Pipeline Run Information:
 - Pipeline Directory: $PIPELINE_DIR
 - Configuration Directory: $CONFIG_DIR
 - Results Directory: $RESULTS_DIR
+- Input BAM Directory: $INPUT_BAM_DIR
 
 Configuration Files:
 - BED File: $BED_FILE
-- Sample Manifest: $MANIFEST_FILE
 - SNP Configuration: $SNP_FILE
 
 Sample Information:
-- Total Samples: $(grep -v "^#" "$MANIFEST_FILE" | grep -v "^sample_id" | wc -l)
-- Reference Samples: $(grep -v "^#" "$MANIFEST_FILE" | grep "reference" | wc -l)
-- Test Samples: $(grep -v "^#" "$MANIFEST_FILE" | grep "test" | wc -l)
+- Total BAM Files: $sample_count
+- Sample Type: $SAMPLE_TYPE
 
 Output Files:
 - Depth Files: $RESULTS_DIR/depth/
@@ -301,11 +314,15 @@ show_usage() {
     cat << EOF
 SMN CNV Detection Pipeline
 
-Usage: $0 [OPTIONS]
+Usage: $0 <input_bam_dir> [OPTIONS]
+
+REQUIRED:
+    input_bam_dir       Directory containing BAM files to analyze
 
 OPTIONS:
     --config DIR        Configuration directory (default: $CONFIG_DIR)
     --results DIR       Results directory (default: $RESULTS_DIR)
+    --sample-type TYPE  Sample type: reference, test, or auto (default: auto)
     --skip-plots        Skip generating plots to speed up analysis
     --verbose           Enable verbose output
     --help              Show this help message
@@ -319,11 +336,24 @@ REQUIREMENTS:
     - samtools
     - python3 with pandas, numpy, matplotlib, seaborn, scipy
 
-CONFIGURATION:
-    Update the following files in $CONFIG_DIR:
-    - sample_manifest.txt: List of BAM files and sample types
-    - smn_exons.bed: Exon coordinates (provided)
-    - discriminating_snps.txt: SNP positions (provided)
+SAMPLE TYPE AUTO-DETECTION:
+    When --sample-type is set to 'auto' (default), the pipeline will:
+    - Classify samples with 'ref', 'control', or 'normal' in their filename as reference
+    - Classify all other samples as test samples
+    - You can override this by specifying --sample-type reference or --sample-type test
+
+EXAMPLES:
+    # Basic usage with auto-detection
+    $0 /path/to/bam/files/
+    
+    # All samples are reference samples
+    $0 /path/to/bam/files/ --sample-type reference
+    
+    # Custom output directory
+    $0 /path/to/bam/files/ --results /custom/output/dir
+    
+    # Fast analysis without plots
+    $0 /path/to/bam/files/ --skip-plots
 
 OUTPUT:
     Results will be saved in $RESULTS_DIR with the following structure:
@@ -337,15 +367,27 @@ EOF
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --help)
+            show_usage
+            exit 0
+            ;;
         --config)
             CONFIG_DIR="$2"
             BED_FILE="$CONFIG_DIR/smn_exons.bed"
-            MANIFEST_FILE="$CONFIG_DIR/sample_manifest.txt"
             SNP_FILE="$CONFIG_DIR/discriminating_snps.txt"
             shift 2
             ;;
         --results)
             RESULTS_DIR="$2"
+            LOG_DIR="$RESULTS_DIR/../logs"
+            shift 2
+            ;;
+        --sample-type)
+            SAMPLE_TYPE="$2"
+            if [[ ! "$SAMPLE_TYPE" =~ ^(reference|test|auto)$ ]]; then
+                print_error "Invalid sample type: $SAMPLE_TYPE. Must be 'reference', 'test', or 'auto'"
+                exit 1
+            fi
             shift 2
             ;;
         --skip-plots)
@@ -356,24 +398,38 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
-        --help)
-            show_usage
-            exit 0
-            ;;
-        *)
+        -*)
             print_error "Unknown option: $1"
             show_usage
             exit 1
             ;;
+        *)
+            if [ -z "$INPUT_BAM_DIR" ]; then
+                INPUT_BAM_DIR="$1"
+            else
+                print_error "Multiple input directories specified"
+                show_usage
+                exit 1
+            fi
+            shift
+            ;;
     esac
 done
+
+# Check if input directory was provided
+if [ -z "$INPUT_BAM_DIR" ]; then
+    print_error "Input BAM directory is required"
+    show_usage
+    exit 1
+fi
 
 # Main pipeline execution
 main() {
     print_info "Starting SMN CNV Detection Pipeline"
-    print_info "Pipeline directory: $PIPELINE_DIR"
+    print_info "Input BAM directory: $INPUT_BAM_DIR"
     print_info "Configuration directory: $CONFIG_DIR"
     print_info "Results directory: $RESULTS_DIR"
+    print_info "Sample type: $SAMPLE_TYPE"
     
     # Pre-flight checks
     check_dependencies

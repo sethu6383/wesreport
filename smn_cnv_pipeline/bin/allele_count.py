@@ -2,7 +2,7 @@
 
 """
 allele_count.py - Perform allele-specific counting at SMN1/SMN2 discriminating SNPs
-Usage: python allele_count.py <sample_manifest> <snp_file> <output_dir>
+Usage: python allele_count.py <input_bam_dir> <snp_file> <output_dir> [--sample-type TYPE]
 """
 
 import sys
@@ -11,6 +11,8 @@ import subprocess
 import pandas as pd
 from pathlib import Path
 import re
+import argparse
+import glob
 
 def read_snp_file(snp_file):
     """Read SNP configuration file."""
@@ -33,6 +35,34 @@ def read_snp_file(snp_file):
                     'gene': gene
                 })
     return snps
+
+def find_bam_files(input_dir):
+    """Find all BAM files in the input directory."""
+    bam_pattern = os.path.join(input_dir, "*.bam")
+    bam_files = glob.glob(bam_pattern)
+    
+    if not bam_files:
+        print(f"No BAM files found in directory: {input_dir}")
+        return []
+    
+    # Create sample information
+    samples = []
+    for bam_path in bam_files:
+        sample_id = os.path.basename(bam_path).replace('.bam', '')
+        
+        # Auto-detect sample type based on filename
+        if any(keyword in sample_id.lower() for keyword in ['ref', 'control', 'normal']):
+            sample_type = 'reference'
+        else:
+            sample_type = 'test'
+        
+        samples.append({
+            'sample_id': sample_id,
+            'bam_path': bam_path,
+            'sample_type': sample_type
+        })
+    
+    return samples
 
 def parse_pileup_line(line):
     """Parse a single line from samtools mpileup output."""
@@ -140,11 +170,14 @@ def count_alleles_at_position(bam_file, chrom, pos, ref_allele, alt_allele):
             'raw_output': f'Error: {e}'
         }
 
-def process_sample(sample_id, bam_path, snps, output_dir):
+def process_sample(sample_info, snps, output_dir):
     """Process a single sample for all SNPs."""
     results = []
+    sample_id = sample_info['sample_id']
+    bam_path = sample_info['bam_path']
+    sample_type = sample_info['sample_type']
     
-    print(f"Processing sample: {sample_id}")
+    print(f"Processing sample: {sample_id} (type: {sample_type})")
     
     # Check if BAM file exists
     if not os.path.exists(bam_path):
@@ -171,7 +204,8 @@ def process_sample(sample_id, bam_path, snps, output_dir):
             'total_depth': allele_counts['total_depth'],
             'other_count': allele_counts['other_count'],
             'ref_freq': allele_counts['ref_count'] / max(1, allele_counts['total_depth']),
-            'alt_freq': allele_counts['alt_count'] / max(1, allele_counts['total_depth'])
+            'alt_freq': allele_counts['alt_count'] / max(1, allele_counts['total_depth']),
+            'sample_type': sample_type
         }
         
         results.append(result)
@@ -179,65 +213,59 @@ def process_sample(sample_id, bam_path, snps, output_dir):
     return results
 
 def main():
-    if len(sys.argv) != 4:
-        print("Usage: python allele_count.py <sample_manifest> <snp_file> <output_dir>")
-        print("  sample_manifest: Path to sample manifest file")
-        print("  snp_file: Path to SNP configuration file")
-        print("  output_dir: Output directory for allele count files")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Perform allele-specific counting at SMN1/SMN2 discriminating SNPs')
+    parser.add_argument('input_bam_dir', help='Directory containing BAM files')
+    parser.add_argument('snp_file', help='Path to SNP configuration file')
+    parser.add_argument('output_dir', help='Output directory for allele count files')
+    parser.add_argument('--sample-type', choices=['reference', 'test', 'auto'], 
+                       default='auto', help='Sample type for all samples (default: auto-detect)')
     
-    manifest_file = sys.argv[1]
-    snp_file = sys.argv[2]
-    output_dir = sys.argv[3]
+    args = parser.parse_args()
     
     # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     
     # Read SNP configurations
     print("Reading SNP configurations...")
-    snps = read_snp_file(snp_file)
+    snps = read_snp_file(args.snp_file)
     print(f"Found {len(snps)} SNPs to analyze")
     
-    # Read sample manifest
-    samples = []
-    with open(manifest_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('#') or not line or line.startswith('sample_id'):
-                continue
-            
-            parts = line.split('\t')
-            if len(parts) >= 3:
-                sample_id, bam_path, sample_type = parts[:3]
-                population = parts[3] if len(parts) > 3 else 'Unknown'
-                samples.append({
-                    'sample_id': sample_id,
-                    'bam_path': bam_path,
-                    'sample_type': sample_type,
-                    'population': population
-                })
+    # Find BAM files
+    print(f"Scanning for BAM files in: {args.input_bam_dir}")
+    samples = find_bam_files(args.input_bam_dir)
+    
+    if not samples:
+        print("Error: No BAM files found")
+        sys.exit(1)
+    
+    # Override sample type if specified
+    if args.sample_type != 'auto':
+        for sample in samples:
+            sample['sample_type'] = args.sample_type
     
     print(f"Found {len(samples)} samples to process")
+    print("Sample types:")
+    type_counts = {}
+    for sample in samples:
+        sample_type = sample['sample_type']
+        type_counts[sample_type] = type_counts.get(sample_type, 0) + 1
+    for stype, count in type_counts.items():
+        print(f"  {stype}: {count} samples")
     
     # Process all samples
     all_results = []
     for sample in samples:
-        sample_results = process_sample(
-            sample['sample_id'], 
-            sample['bam_path'], 
-            snps, 
-            output_dir
-        )
+        sample_results = process_sample(sample, snps, args.output_dir)
         all_results.extend(sample_results)
     
     # Save results
     if all_results:
         df = pd.DataFrame(all_results)
-        output_file = os.path.join(output_dir, 'allele_counts.txt')
+        output_file = os.path.join(args.output_dir, 'allele_counts.txt')
         df.to_csv(output_file, index=False, sep='\t')
         
         # Create summary by SNP
-        summary_file = os.path.join(output_dir, 'allele_counts_summary.txt')
+        summary_file = os.path.join(args.output_dir, 'allele_counts_summary.txt')
         summary = df.groupby(['snp_name', 'gene']).agg({
             'ref_count': ['mean', 'std', 'min', 'max'],
             'alt_count': ['mean', 'std', 'min', 'max'],
@@ -248,9 +276,15 @@ def main():
         
         summary.to_csv(summary_file, sep='\t')
         
+        # Save sample info
+        sample_info_file = os.path.join(args.output_dir, 'sample_info.txt')
+        sample_df = pd.DataFrame(samples)
+        sample_df.to_csv(sample_info_file, index=False, sep='\t')
+        
         print(f"Allele counting completed!")
         print(f"Results saved to: {output_file}")
         print(f"Summary saved to: {summary_file}")
+        print(f"Sample info saved to: {sample_info_file}")
         print(f"Processed {len(df['sample_id'].unique())} samples")
     else:
         print("No allele count data generated!")

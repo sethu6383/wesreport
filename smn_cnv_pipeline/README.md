@@ -4,10 +4,12 @@ A comprehensive MVP pipeline for detecting copy number variations (CNVs) in SMN1
 
 ## Overview
 
-This pipeline processes a cohort of samples (reference and test) through a series of modules to detect SMN1/SMN2 copy number variations, which are crucial for Spinal Muscular Atrophy (SMA) diagnosis and carrier screening.
+This pipeline processes BAM files from a cohort of samples through a series of modules to detect SMN1/SMN2 copy number variations, which are crucial for Spinal Muscular Atrophy (SMA) diagnosis and carrier screening.
 
 ### Key Features
 
+- **Automated BAM file discovery** from input directory
+- **Smart sample type detection** based on filename patterns
 - **Automated depth extraction** using samtools depth
 - **Coverage normalization** using reference samples to compute Z-scores
 - **Allele-specific counting** at known SMN1/SMN2-discriminating SNPs
@@ -17,12 +19,14 @@ This pipeline processes a cohort of samples (reference and test) through a serie
 
 ## Pipeline Workflow
 
-1. **Depth Extraction**: Extract read depth per exon using `samtools depth`
-2. **Coverage Calculation**: Calculate average coverage per exon
-3. **Allele Counting**: Perform allele-specific base counting at discriminating SNPs
-4. **Normalization**: Normalize coverage using reference samples and compute Z-scores
-5. **Copy Number Estimation**: Estimate CN states using predefined thresholds
-6. **Report Generation**: Create per-sample reports with clinical interpretation
+1. **BAM File Discovery**: Automatically find all BAM files in input directory
+2. **Sample Type Detection**: Auto-classify samples as reference or test based on filenames
+3. **Depth Extraction**: Extract read depth per exon using `samtools depth`
+4. **Coverage Calculation**: Calculate average coverage per exon
+5. **Allele Counting**: Perform allele-specific base counting at discriminating SNPs
+6. **Normalization**: Normalize coverage using reference samples and compute Z-scores
+7. **Copy Number Estimation**: Estimate CN states using predefined thresholds
+8. **Report Generation**: Create per-sample reports with clinical interpretation
 
 ## Copy Number Thresholds
 
@@ -68,23 +72,40 @@ chmod +x run_pipeline.sh bin/*.sh
 
 ## Configuration
 
-### 1. Sample Manifest File
+### Input Data Preparation
 
-Edit `config/sample_manifest.txt` to list your BAM files:
+1. **Organize BAM Files**: Place all BAM files in a single directory
+   ```
+   /path/to/bam/files/
+   ├── ref001.bam
+   ├── ref001.bam.bai
+   ├── ref002.bam
+   ├── ref002.bam.bai
+   ├── control_sample.bam
+   ├── control_sample.bam.bai
+   ├── patient001.bam
+   ├── patient001.bam.bai
+   └── test_sample.bam
+       test_sample.bam.bai
+   ```
 
-```
-sample_id	bam_path	sample_type	population
-REF001	/path/to/ref001.bam	reference	EUR
-REF002	/path/to/ref002.bam	reference	EUR
-TEST001	/path/to/test001.bam	test	EUR
-```
+2. **Ensure BAM Indexing**: All BAM files must have corresponding .bai index files
+   ```bash
+   samtools index your_file.bam
+   ```
 
-**Important**: 
-- Include at least 3-5 reference samples for reliable normalization
-- Ensure BAM files are indexed (.bai files present)
-- Use absolute paths for BAM files
+### Sample Type Auto-Detection
 
-### 2. Genomic Coordinates
+The pipeline automatically classifies samples based on filename patterns:
+
+- **Reference samples**: Filenames containing `ref`, `control`, or `normal`
+  - Examples: `ref001.bam`, `control_sample.bam`, `normal_01.bam`
+- **Test samples**: All other BAM files
+  - Examples: `patient001.bam`, `sample_xyz.bam`, `test001.bam`
+
+You can override auto-detection using the `--sample-type` option.
+
+### Genomic Coordinates
 
 The pipeline includes pre-configured files for GRCh38:
 - `config/smn_exons.bed`: SMN1/SMN2 exon 7 and 8 coordinates
@@ -97,19 +118,32 @@ These files are ready to use but can be modified if needed.
 ### Basic Usage
 
 ```bash
-./run_pipeline.sh
+# Auto-detect sample types from filenames
+./run_pipeline.sh /path/to/bam/files/
 ```
 
 ### Advanced Usage
 
 ```bash
-./run_pipeline.sh --config /path/to/config --results /path/to/results --skip-plots
+# All samples are reference samples
+./run_pipeline.sh /path/to/bam/files/ --sample-type reference
+
+# All samples are test samples  
+./run_pipeline.sh /path/to/bam/files/ --sample-type test
+
+# Custom output directory
+./run_pipeline.sh /path/to/bam/files/ --results /custom/output/dir
+
+# Fast analysis without plots
+./run_pipeline.sh /path/to/bam/files/ --skip-plots
 ```
 
 ### Command Line Options
 
+- `input_bam_dir`: **Required** - Directory containing BAM files to analyze
 - `--config DIR`: Configuration directory (default: ./config)
 - `--results DIR`: Results directory (default: ./results)
+- `--sample-type TYPE`: Sample type: `reference`, `test`, or `auto` (default: auto)
 - `--skip-plots`: Skip generating plots to speed up analysis
 - `--verbose`: Enable verbose output
 - `--help`: Show help message
@@ -124,7 +158,8 @@ results/
 │   └── coverage_summary_pivot.txt
 ├── allele_counts/            # Allele counting results
 │   ├── allele_counts.txt
-│   └── allele_counts_summary.txt
+│   ├── allele_counts_summary.txt
+│   └── sample_info.txt
 ├── normalized/               # Normalized data and Z-scores
 │   ├── z_scores.txt
 │   ├── z_scores_ref_stats.txt
@@ -169,17 +204,18 @@ results/
 
 ### Common Issues
 
-1. **"BAM file not found"**
-   - Verify BAM file paths in sample manifest
-   - Ensure files are accessible from pipeline directory
+1. **"No BAM files found in directory"**
+   - Verify BAM files are in the specified directory
+   - Check file permissions
 
 2. **"BAM index not found"**
    - Index BAM files: `samtools index file.bam`
    - Ensure .bai files are in same directory as BAM files
 
 3. **"Very few reference samples"**
-   - Include at least 3-5 reference samples
-   - Ensure reference samples are marked correctly in manifest
+   - Use more descriptive filenames for reference samples
+   - Manually specify sample type: `--sample-type reference`
+   - Include at least 3-5 reference samples for reliable normalization
 
 4. **Python package errors**
    - Install missing packages: `pip install pandas numpy matplotlib seaborn scipy`
@@ -239,20 +275,57 @@ The pipeline provides several quality metrics:
 - Cannot detect point mutations or small indels
 - Results require clinical correlation
 
+## Examples
+
+### Quick Start Example
+
+```bash
+# 1. Prepare your data
+mkdir -p /data/sma_analysis/bams
+# Copy your BAM files to this directory
+
+# 2. Index BAM files if needed
+for bam in /data/sma_analysis/bams/*.bam; do
+    samtools index "$bam"
+done
+
+# 3. Run pipeline
+./run_pipeline.sh /data/sma_analysis/bams/
+
+# 4. View results
+open results/pipeline_summary.txt
+open results/reports/*/report.html
+```
+
+### Different Sample Type Scenarios
+
+```bash
+# Scenario 1: Mixed samples (auto-detection)
+./run_pipeline.sh /data/mixed_samples/
+# Files named ref*.bam, control*.bam → reference
+# Other files → test
+
+# Scenario 2: All reference samples (e.g., building reference database)
+./run_pipeline.sh /data/reference_cohort/ --sample-type reference
+
+# Scenario 3: All test samples (with external reference data)
+./run_pipeline.sh /data/patient_samples/ --sample-type test
+```
+
 ## Support and Contributing
 
 ### Getting Help
 
 1. Check the troubleshooting section
 2. Review log files for specific errors
-3. Verify configuration files and dependencies
+3. Verify BAM file organization and indexing
 
 ### Contributing
 
 To contribute improvements or report issues:
 1. Document the problem with log files
-2. Provide sample configuration files (anonymized)
-3. Include system information and dependency versions
+2. Include system information and dependency versions
+3. Provide example data structure (anonymized)
 
 ## License and Citation
 
@@ -265,6 +338,10 @@ variations in SMN1 and SMN2 genes from whole exome sequencing data.
 
 ## Version History
 
+- **v2.0**: Updated to use input directory instead of manifest file
+  - Automatic BAM file discovery
+  - Smart sample type detection
+  - Simplified workflow
 - **v1.0**: Initial MVP release with core functionality
   - Depth extraction and coverage normalization
   - Z-score based copy number estimation

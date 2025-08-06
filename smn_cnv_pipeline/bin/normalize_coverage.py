@@ -2,7 +2,7 @@
 
 """
 normalize_coverage.py - Normalize coverage using reference samples and calculate Z-scores
-Usage: python normalize_coverage.py <coverage_file> <sample_manifest> <output_file>
+Usage: python normalize_coverage.py <coverage_file> <sample_info_file> <output_file>
 """
 
 import sys
@@ -13,25 +13,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-def read_sample_manifest(manifest_file):
-    """Read sample manifest and return sample metadata."""
-    samples = {}
-    with open(manifest_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('#') or not line or line.startswith('sample_id'):
-                continue
-            
-            parts = line.split('\t')
-            if len(parts) >= 3:
-                sample_id, bam_path, sample_type = parts[:3]
-                population = parts[3] if len(parts) > 3 else 'Unknown'
-                samples[sample_id] = {
-                    'bam_path': bam_path,
-                    'sample_type': sample_type,
-                    'population': population
-                }
-    return samples
+def read_sample_info(sample_info_file):
+    """Read sample information from file."""
+    try:
+        sample_df = pd.read_csv(sample_info_file, sep='\t')
+        samples = {}
+        for _, row in sample_df.iterrows():
+            samples[row['sample_id']] = {
+                'bam_path': row.get('bam_path', ''),
+                'sample_type': row.get('sample_type', 'unknown')
+            }
+        return samples
+    except Exception as e:
+        print(f"Warning: Could not read sample info file ({e}). Using defaults.")
+        return {}
 
 def calculate_reference_stats(coverage_df, reference_samples):
     """Calculate mean and standard deviation for each exon using reference samples."""
@@ -196,14 +191,14 @@ def create_normalization_plots(z_scores_df, ref_stats, output_dir):
 
 def main():
     if len(sys.argv) != 4:
-        print("Usage: python normalize_coverage.py <coverage_file> <sample_manifest> <output_file>")
+        print("Usage: python normalize_coverage.py <coverage_file> <sample_info_file> <output_file>")
         print("  coverage_file: Coverage data file (from calculate_coverage.py)")
-        print("  sample_manifest: Sample manifest file")
+        print("  sample_info_file: Sample information file (from previous steps)")
         print("  output_file: Output file for normalized data")
         sys.exit(1)
     
     coverage_file = sys.argv[1]
-    manifest_file = sys.argv[2]
+    sample_info_file = sys.argv[2]
     output_file = sys.argv[3]
     
     output_dir = Path(output_file).parent
@@ -219,8 +214,18 @@ def main():
         print(f"Error reading coverage file: {e}")
         sys.exit(1)
     
-    # Read sample manifest
-    samples_info = read_sample_manifest(manifest_file)
+    # Read sample information
+    samples_info = read_sample_info(sample_info_file)
+    
+    # If no sample info available, try to auto-detect from sample names
+    if not samples_info:
+        print("Auto-detecting sample types from sample names...")
+        for sample_id in coverage_df['sample_id'].unique():
+            if any(keyword in sample_id.lower() for keyword in ['ref', 'control', 'normal']):
+                sample_type = 'reference'
+            else:
+                sample_type = 'test'
+            samples_info[sample_id] = {'sample_type': sample_type, 'bam_path': ''}
     
     # Identify reference samples
     reference_samples = [sid for sid, info in samples_info.items() 
@@ -242,9 +247,6 @@ def main():
     # Add sample type information
     z_scores_df['sample_type'] = z_scores_df['sample_id'].map(
         lambda x: samples_info.get(x, {}).get('sample_type', 'unknown')
-    )
-    z_scores_df['population'] = z_scores_df['sample_id'].map(
-        lambda x: samples_info.get(x, {}).get('population', 'unknown')
     )
     
     # Save results
